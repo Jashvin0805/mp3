@@ -82,11 +82,45 @@ module.exports = function (router) {
                                 emailError.status = 400;
                                 throw emailError;
                             }
-
                             
+                            if (
+                                body.assignedUserName !== undefined &&
+                                body.assignedUserName !== user.name
+                            ) {
+                                var nameError = new Error('assignedUserName must match the assigned user');
+                                nameError.status = 400;
+                                throw nameError;
+                            }
+
+                            assignedUserName = user.name;
                         }
+
+                        var newTask = new Task({
+                            name: body.name,
+                            deadline: deadline,
+                            description: description,
+                            completed: completed,
+                            assignedUser: user ? user._id.toString() : '',
+                            assignedUserName: assignedUserName,
+                        })
+
+                        await newTask.save({ session: session });
+
+                        if (user && !completed) {
+                            await User.updateOne(
+                                { _id: user._id },
+                                {
+                                    $addToSet: {
+                                        pendingTasks: newTask._id.toString()
+                                    }
+                                },
+                                { session: session }
+                            );
+                        }
+
+                        return newTask;
                     }
-                )
+                );
 
                 return res.status(201).json({
                     message: 'Task created successfully',
