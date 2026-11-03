@@ -248,15 +248,65 @@ module.exports = function (router) {
                 }
 
                 // Limit
-                var tasks = await Task.find(where).sort(sort).select(select).skip(skip).limit(100);
+                var limit = 100;
+                if (req.query.limit !== undefined) {
+                    try {
+                        limit = JSON.parse(req.query.limit);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'limit must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (!Number.isSafeInteger(limit) || limit < 0) {
+                        return res.status(400).json({
+                            message: 'limit must be a non-negative integer',
+                            data: {}
+                        });
+                    }
+                }
 
                 // Count
+                var count = false;
+                if (req.query.count !== undefined) {
+                    try {
+                        count = JSON.parse(req.query.count);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'count must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (typeof count !== 'boolean') {
+                        return res.status(400).json({
+                            message: 'count must be a boolean value',
+                            data: {}
+                        });
+                    }
+                }
+
+                var tasks;
+
+                if (count) {
+                    tasks = await Task.countDocuments(where);
+                } else {
+                    tasks = await Task.find(where).sort(sort).select(select).skip(skip).limit(limit);
+                }
 
                 res.status(200).json({
                     message: 'Tasks retrieved successfully',
                     data: tasks
                 });
             } catch (err) {
+                if (err.name === 'CastError') {
+                    return res.status(400).json({
+                        message: 'Filter contains an invalid field value',
+                        data: {}
+                    });
+                }
+
                 console.error('GET /api/tasks failed:', err.message);
                 
                 res.status(500).json({
@@ -286,7 +336,7 @@ module.exports = function (router) {
                     });
                 }
 
-                // Select Parameter
+                // Select
                 var select = {};
 
                 if (req.query.select !== undefined) {

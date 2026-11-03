@@ -156,13 +156,164 @@ module.exports = function (router) {
         async function (req, res) {
             // Retreive the users and send a response here.
             try {
-                var users = await User.find({});
+                // Where
+                var where = {};
+                if (req.query.where !== undefined) {
+                    try {
+                        where = JSON.parse(req.query.where);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'where must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (where === null || typeof where !== 'object' || Array.isArray(where)) {
+                        return res.status(400).json({
+                            message: 'where must be a JSON object',
+                            data: {}
+                        });
+                    }
+                }
+
+                // Sort
+                var sort = {};
+                if (req.query.sort !== undefined) {
+                    try {
+                        sort = JSON.parse(req.query.sort);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'sort must contain valid JSON',
+                            data: {}
+                        })
+                    }
+
+                    if (
+                        sort === null || typeof sort !== 'object' || Array.isArray(sort) ||
+                        Object.values(sort).some(value => value !== 1 && value !== -1)
+                    ) {
+                        return res.status(400).json({
+                            message: 'sort must be an object with a value of 1 or -1',
+                            data: {}
+                        })
+                    }
+                }
+
+                // Select
+                var select = {};
+                if (req.query.select !== undefined) {
+                    try {
+                        select = JSON.parse(req.query.select);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'select must contain a valid JSON',
+                            data: {}
+                        })
+                    }
+
+                    if (
+                        select === null || typeof select !== 'object' || Array.isArray(select) ||
+                        Object.values(select).some(value => value !== 1 && value !== 0)
+                    ) {
+                        return res.status(400).json({
+                            message: 'select must be an object with values of 0 or 1',
+                            data: {}
+                        })
+                    }
+
+                    var fields = Object.entries(select).filter(([field]) => field !== '_id');
+
+                    if (
+                        fields.some(([, value]) => value === 0) &&
+                        fields.some(([, value]) => value === 1)
+                    ) {
+                        return res.status(400).json({
+                            message: 'select cannot mix include and exclude fields except for _id',
+                            data: {}
+                        })
+                    }
+                }
+
+                // Skip
+                var skip = 0;
+                if (req.query.skip !== undefined) {
+                    try {
+                        skip = JSON.parse(req.query.skip);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'skip must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (!Number.isSafeInteger(skip) || skip < 0) {
+                        return res.status(400).json({
+                            message: 'skip must be a non-negative integer',
+                            data: {}
+                        });
+                    }
+                }
+
+                // Limit
+                var limit = 0;
+                if (req.query.limit !== undefined) {
+                    try {
+                        limit = JSON.parse(req.query.limit);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'limit must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (!Number.isSafeInteger(limit) || limit < 0) {
+                        return res.status(400).json({
+                            message: 'limit must be a non-negative integer',
+                            data: {}
+                        });
+                    }
+                }
+
+                // Count
+                var count = false;
+                if (req.query.count !== undefined) {
+                    try {
+                        count = JSON.parse(req.query.count);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'count must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (typeof count !== 'boolean') {
+                        return res.status(400).json({
+                            message: 'count must be a boolean value',
+                            data: {}
+                        });
+                    }
+                }
+
+                var users;
+
+                if (count) {
+                    users = await User.countDocuments(where);
+                } else {
+                    users = await User.find(where).sort(sort).select(select).skip(skip).limit(limit);
+                }
 
                 res.status(200).json({
                     message: 'Users retrieved successfully',
                     data: users
                 });
             } catch (err) {
+                if (err.name === 'CastError') {
+                    return res.status(400).json({
+                        message: 'Filter contains an invalid field value',
+                        data: {}
+                    });
+                }
+
                 console.error('GET /api/users failed:', err.message);
                 
                 res.status(500).json({
@@ -171,7 +322,7 @@ module.exports = function (router) {
                 })
             }
         }
-    );
+    )
 
     // ----------------------------------
 
@@ -192,7 +343,7 @@ module.exports = function (router) {
                     });
                 }
 
-                // Select Parameter
+                // Select
                 var select = {};
 
                 if (req.query.select !== undefined) {
