@@ -1,6 +1,5 @@
 var mongoose = require('mongoose');
 var User = require('../models/user');
-const user = require('../models/user');
 
 // Export the Mongoose model
 module.exports = function (router) {
@@ -67,40 +66,59 @@ module.exports = function (router) {
                             emailError.status = 400;
                             throw emailError;
                         }
-
-                        if (
-                            body.assignedUser !== undefined &&
-                            body.assignedUserName !== user.name
-                        ) {
-                            var nameError = new Error('assignedUserName must match the assigned user');
-                            nameError.status = 400;
-                            throw nameError
+        
+                        // Retrieve Task
+                        var referencedTasks = await Task.find({
+                            _id: { $in: pendingTasks }
+                        }).session(session);
+        
+                        if (referencedTasks.some(task => task.completed)) {
+                            var completedError = new Error('Completed tasks cannot be in pendingTasks');
+                            completedError.status = 400;
+                            throw completedError;
                         }
 
-                        var newTask = new Task({
+                        if (referencedTasks.length !== pendingTasks.length) {
+                            var missingError = new Error('One or more referenced tasks were not found');
+                            missingError.status = 404;
+                            throw missingError;
+                        }
+
+                        var newUser = new User({
                             name: body.name,
-                            deadline: deadline,
-                            description: description,
-                            completed: completed,
-                            assignedUser: user ? user._id.toString() : '',
-                            assignedUserName: assignedUserName,
+                            email: body.email,
+                            pendingTasks: pendingTasks
                         });
 
-                        await newTask.save({ session: session });
+                        await newUser.save({ session: session });
 
-                        if (user && !completed) {
-                            await User.updateOne(
-                                { _id: user._id },
-                                {
-                                    $addToSet: {
-                                        pendingTasks: newTask._id.toString()
-                                    }
-                                },
-                                { session: session }
-                            );
-                        }
+                        // Remove tasks from other Users' pending lists.
+                        await User.updateMany(
+                            {
+                                _id: { $ne: newUser._id },
+                                pendingTasks: { $in: pendingTasks }
+                            },
+                            {
+                                $pull: {
+                                    pendingTasks: { $in: pendingTasks }
+                                }
+                            },
+                            { session: session }
+                        );
 
-                        return newTask;
+                        // Assign tasks to the new User.
+                        await Task.updateMany(
+                            { _id: { $in: pendingTasks } },
+                            {
+                                $set: {
+                                    assignedUser: newUser._id.toString(),
+                                    assignedUserName: newUser.name
+                                }
+                            },
+                            { session: session }
+                        );
+
+                        return newUser;
                     }
                 );
 
@@ -174,6 +192,7 @@ module.exports = function (router) {
                     });
                 }
 
+                // Select Parameter
                 var select = {};
 
                 if (req.query.select !== undefined) {

@@ -36,7 +36,7 @@ module.exports = function (router) {
                     Number.isNaN(new Date(body.deadline).getTime())
                 ) {
                     return res.status(400).json({
-                        message: 'Deadline must be a valid data string',
+                        message: 'Deadline must be a valid date string',
                         data: {}
                     });
                 }
@@ -62,14 +62,14 @@ module.exports = function (router) {
                 var assignedUser = body.assignedUser === undefined ? '' : body.assignedUser;
 
                 // Validate assignedUser
-                if (assignedUser !== '' || !mongoose.isObjectIdOrHexString(assignedUser)) {
+                if (assignedUser !== '' && !mongoose.isObjectIdOrHexString(assignedUser)) {
                     return res.status(400).json({
                         message: 'assignedUser must be a valid user ID or an empty string',
                         data: {}
                     })
                 }
 
-                var saveTask = mongoose.connection.transaction(
+                var saveTask = await mongoose.connection.transaction(
                     async function(session) {
                         var assignedUserName = 'unassigned';
                         var user = null;
@@ -79,7 +79,7 @@ module.exports = function (router) {
 
                             if (!user) {
                                 var emailError = new Error('Assigned user not found');
-                                emailError.status = 400;
+                                emailError.status = 404;
                                 throw emailError;
                             }
                             
@@ -127,6 +127,13 @@ module.exports = function (router) {
                     data: saveTask
                 });
             } catch (err) {
+                if (err.status === 400 || err.status === 404) {
+                    return res.status(err.status).json({
+                        message: err.message,
+                        data: {}
+                    });
+                }
+
                 console.error('POST /api/tasks failed:', err.message);
 
                 return res.status(500).json({
@@ -144,7 +151,6 @@ module.exports = function (router) {
             try {
                 // Where
                 var where = {};
-
                 if (req.query.where !== undefined) {
                     try {
                         where = JSON.parse(req.query.where);
@@ -164,9 +170,87 @@ module.exports = function (router) {
                 }
 
                 // Sort
+                var sort = {};
+                if (req.query.sort !== undefined) {
+                    try {
+                        sort = JSON.parse(req.query.sort);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'sort must contain valid JSON',
+                            data: {}
+                        })
+                    }
 
-                // Tasks
-                var tasks = await Task.find(where).limit(100);
+                    if (
+                        sort === null || typeof sort !== 'object' || Array.isArray(sort) ||
+                        Object.values(sort).some(value => value !== 1 && value !== -1)
+                    ) {
+                        return res.status(400).json({
+                            message: 'sort must be an object with a value of 1 or -1',
+                            data: {}
+                        })
+                    }
+                }
+
+                // Select
+                var select = {};
+                if (req.query.select !== undefined) {
+                    try {
+                        select = JSON.parse(req.query.select);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'select must contain a valid JSON',
+                            data: {}
+                        })
+                    }
+
+                    if (
+                        select === null || typeof select !== 'object' || Array.isArray(select) ||
+                        Object.values(select).some(value => value !== 1 && value !== 0)
+                    ) {
+                        return res.status(400).json({
+                            message: 'select must be an object with values of 0 or 1',
+                            data: {}
+                        })
+                    }
+
+                    var fields = Object.entries(select).filter(([field]) => field !== '_id');
+
+                    if (
+                        fields.some(([, value]) => value === 0) &&
+                        fields.some(([, value]) => value === 1)
+                    ) {
+                        return res.status(400).json({
+                            message: 'select cannot mix include and exclude fields except for _id',
+                            data: {}
+                        })
+                    }
+                }
+
+                // Skip
+                var skip = 0;
+                if (req.query.skip !== undefined) {
+                    try {
+                        skip = JSON.parse(req.query.skip);
+                    } catch (err) {
+                        return res.status(400).json({
+                            message: 'skip must contain a valid JSON',
+                            data: {}
+                        });
+                    }
+
+                    if (!Number.isSafeInteger(skip) || skip < 0) {
+                        return res.status(400).json({
+                            message: 'skip must be a non-negative integer',
+                            data: {}
+                        });
+                    }
+                }
+
+                // Limit
+                var tasks = await Task.find(where).sort(sort).select(select).skip(skip).limit(100);
+
+                // Count
 
                 res.status(200).json({
                     message: 'Tasks retrieved successfully',
@@ -202,6 +286,7 @@ module.exports = function (router) {
                     });
                 }
 
+                // Select Parameter
                 var select = {};
 
                 if (req.query.select !== undefined) {
