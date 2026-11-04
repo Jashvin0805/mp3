@@ -101,7 +101,7 @@ module.exports = function (router) {
                             description: description,
                             completed: completed,
                             assignedUser: user ? user._id.toString() : '',
-                            assignedUserName: assignedUserName,
+                            assignedUserName: assignedUserName
                         })
 
                         await newTask.save({ session: session });
@@ -399,7 +399,184 @@ module.exports = function (router) {
     )
 
     // Task ID Route PUT
-    // taskIdRoute.put();
+    taskIdRoute.put(
+        async function (req, res) {
+            var id = req.params.id;
+
+            if (!mongoose.isObjectIdOrHexString(id)) {
+                return res.status(404).json({
+                    message: 'Task not found',
+                    data: {}
+                });
+            }
+
+            try {
+                var existingTask = await Task.findById(id);
+
+                // Check if task exists
+                if (!existingTask) {
+                    return res.status(404).json({
+                        message: 'Task not found',
+                        data: {}
+                    });
+                }
+
+                // Validate if the new task is correct and valid
+                var body = req.body;
+
+                // Validate Body
+                if (!body || typeof body !== 'object' || Array.isArray(body)) {
+                    return res.status(400).json({
+                        message: 'Request body must be an object',
+                        data: {}
+                    });
+                }
+                
+                // Validate Name
+                if (typeof body.name !== 'string' || body.name.trim() === '') {
+                    return res.status(400).json({
+                        message: 'Name must be a non-empty string',
+                        data: {}
+                    });
+                }
+
+                // Validate Deadline
+                if (
+                    typeof body.deadline !== 'string' || body.deadline.trim() === '' ||
+                    Number.isNaN(new Date(body.deadline).getTime())
+                ) {
+                    return res.status(400).json({
+                        message: 'Deadline must be a valid date string',
+                        data: {}
+                    });
+                }
+
+                var deadline = new Date(body.deadline);
+
+                // Validate other variables from task.js
+                if (
+                    (body.deadline !== undefined && typeof body.deadline !== 'string') ||
+                    (body.description !== undefined && typeof body.description !== 'string') ||
+                    (body.completed !== undefined && typeof body.completed !== 'boolean') ||
+                    (body.assignedUser !== undefined && typeof body.assignedUser !== 'string') ||
+                    (body.assignedUserName !== undefined && typeof body.assignedUserName !== 'string')
+                ) {
+                    return res.status(400).json({
+                        message: 'Task fields have invalid data-types',
+                        data: {}
+                    })
+                }
+
+                var description = body.description === undefined ? '' : body.description;
+                var completed = body.completed === undefined ? false : body.completed;
+                var assignedUser = body.assignedUser === undefined ? '' : body.assignedUser;
+
+                // Validate assignedUser
+                if (assignedUser !== '' && !mongoose.isObjectIdOrHexString(assignedUser)) {
+                    return res.status(400).json({
+                        message: 'assignedUser must be a valid user ID or an empty string',
+                        data: {}
+                    })
+                }
+
+                // Case: handle if assignedUser is empty string
+                if (
+                    assignedUser === '' && body.assignedUserName !== undefined &&
+                    body.assignedUserName !== 'unassigned'
+                ) {
+                    return res.status(400).json({
+                        message: 'An unassigned task must use assignedUserName "unassigned"',
+                        data: {}
+                    });
+                }
+
+                // Replace existingTask with new data
+                var updateTask = await mongoose.connection.transaction(
+                    async function (session) {
+                        var task = await Task.findById(id).session(session);
+
+                        if (!task) {
+                            var missingError = new Error('Task not found');
+                            missingError.status = 404;
+                            throw missingError
+                        }
+
+                        var user = null;
+                        var assignedUserName = 'unassigned';
+
+                        if (assignedUser !== '') {
+                            user = await User.findById(assignedUser).session(session);
+
+                            if (!user) {
+                                var emailError = new Error('Assigned user not found');
+                                emailError.status = 404;
+                                throw emailError;
+                            }
+                            
+                            if (
+                                body.assignedUserName !== undefined &&
+                                body.assignedUserName !== user.name
+                            ) {
+                                var nameError = new Error('assignedUserName must match the assigned user');
+                                nameError.status = 400;
+                                throw nameError;
+                            }
+
+                            assignedUserName = user.name;
+                        }
+
+                        task.name = body.name;
+                        task.deadline = deadline;
+                        task.description = description;
+                        task.completed = completed;
+                        task.assignedUser = user ? user._id.toString() : '';
+                        task.assignedUserName = assignedUserName;
+
+                        await task.save({ session: session });
+
+                        await User.updateMany(
+                            { pendingTasks: task._id.toString() },
+                            { $pull: { pendingTasks: task._id.toString() } },
+                            { session: session }
+                        );
+
+                        if (user && !completed) {
+                            await User.updateOne(
+                                { _id: user._id },
+                                {
+                                    $addToSet: {
+                                        pendingTasks: task._id.toString()
+                                    }
+                                },
+                                { session: session }
+                            );
+                        }
+
+                        return task;
+                    }
+                );
+
+                return res.status(200).json({
+                    message: 'Task updated successfully',
+                    data: updateTask
+                });
+            } catch (err) {
+                if (err.status === 400 || err.status === 404) {
+                    return res.status(err.status).json({
+                        message: err.message,
+                        data: {}
+                    });
+                }
+
+                console.error('PUT api/tasks/:id failed:', err.message);
+
+                return res.status(500).json({
+                    message: 'Unable to update task',
+                    data: {}
+                });
+            }
+        }
+    );
 
     // Task ID Route DELETE
     taskIdRoute.delete(async function(req, res) {

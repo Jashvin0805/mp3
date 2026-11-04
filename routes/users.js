@@ -406,7 +406,195 @@ module.exports = function (router) {
     );
 
     // User ID Route PUT
-    // userIdRoute.put();
+    userIdRoute.put(
+        async function (req, res) {
+            var id = req.params.id;
+
+            if (!mongoose.isObjectIdOrHexString(id)) {
+                return res.status(404).json({
+                    message: 'User not found',
+                    data: {}
+                });
+            }
+
+            try {
+                var existingUser = await User.findById(id);
+
+                // Check if user exists
+                if (!existingUser) {
+                    return res.status(404).json({
+                        message: 'User not found',
+                        data: {}
+                    });
+                }
+
+                var body = req.body;
+
+                // Validate Body
+                if (!body || typeof body !== 'object' || Array.isArray(body)) {
+                    return res.status(400).json({
+                        message: 'Request body must be an object',
+                        data: {}
+                    });
+                }
+
+                // Validate Name and Email
+                if (
+                    typeof body.name !== 'string' || body.name.trim() === '' ||
+                    typeof body.email !== 'string' || body.email.trim() === ''
+                ) {
+                    return res.status(400).json({
+                        message: 'Name and Email must be non-empty strings',
+                        data: {}
+                    });
+                }
+
+                // Validate Pending Tasks
+                var pendingTasks = body.pendingTasks === undefined ? [] : body.pendingTasks;
+
+                if (
+                    !Array.isArray(pendingTasks) ||
+                    pendingTasks.some(
+                        id => typeof id !== 'string' ||
+                        !mongoose.isObjectIdOrHexString(id)
+                    )
+                ) {
+                    return res.status(400).json({
+                        message: 'pendingTasks must be an array of valid task IDs',
+                        data: {}
+                    });
+                }
+
+                // Validate if User Email ID already exists
+                pendingTasks = [...new Set(pendingTasks.map(id => id.toLowerCase()))];
+
+                await User.init();
+
+                // Creating and saving a User's information in MongoDB
+                var updateUser = await mongoose.connection.transaction(
+                    async function(session) {
+                        var user = await User.findById(id).session(session);
+    
+                        if (!user) {
+                            var missingError = new Error('User not found');
+                            missingError.status = 404;
+                            throw missingError;
+                        }
+
+                        var existUser = await User.findOne({
+                            email: body.email,
+                            _id: { $ne: user._id }
+                        }).session(session);
+        
+                        if (existUser) {
+                            var emailError = new Error('Email is already in use');
+                            emailError.status = 400;
+                            throw emailError;
+                        }
+        
+                        // Retrieve Task
+                        var referencedTasks = await Task.find({
+                            _id: { $in: pendingTasks }
+                        }).session(session);
+        
+                        if (referencedTasks.some(task => task.completed)) {
+                            var completedError = new Error('Completed tasks cannot be in pendingTasks');
+                            completedError.status = 400;
+                            throw completedError;
+                        }
+
+                        if (referencedTasks.length !== pendingTasks.length) {
+                            var missingTaskError = new Error('One or more referenced tasks were not found');
+                            missingTaskError.status = 404;
+                            throw missingTaskError;
+                        }
+
+                        var removeTasks = user.pendingTasks.filter(
+                            taskId => !pendingTasks.includes(taskId.toLowerCase())
+                        );
+
+                        // Unassign tasks removed from the user's pending list
+                        await Task.updateMany(
+                            { _id: { $in: removeTasks } },
+                            {
+                                $set: {
+                                    assignedUser: '',
+                                    assignedUserName: 'unassigned'
+                                }
+                            },
+                            { session: session }
+                        );
+
+                        // Remove tasks from other Users' pending lists.
+                        await User.updateMany(
+                            {
+                                _id: { $ne: user._id },
+                                pendingTasks: { $in: pendingTasks }
+                            },
+                            {
+                                $pull: {
+                                    pendingTasks: { $in: pendingTasks }
+                                }
+                            },
+                            { session: session }
+                        );
+
+                        user.name = body.name;
+                        user.email = body.email;
+                        user.pendingTasks = pendingTasks;
+
+                        await user.save({ session: session });
+
+                        // Assign the requested pending tasks
+                        await Task.updateMany(
+                            { _id: { $in: pendingTasks } },
+                            {
+                                $set: {
+                                    assignedUser: user._id.toString(),
+                                    assignedUserName: user.name
+                                }
+                            },
+                            { session: session }
+                        );
+
+                        await Task.updateMany(
+                            { assignedUser: user._id.toString() },
+                            { $set: { assignedUserName: user.name } },
+                            { session: session }
+                        );
+
+                        return user;
+                    }
+                );
+
+                return res.status(200).json({
+                    message: 'User updated successfully',
+                    data: updateUser
+                });
+            } catch (err) {
+                if (err.code === 11000) {
+                    return res.status(400).json({
+                        message: 'Email is already in use',
+                        data: {}
+                    });
+                }
+
+                if (err.status === 400 || err.status === 404) {
+                    return res.status(err.status).json({
+                        message: err.message,
+                        data: {}
+                    });
+                }
+
+                console.error('PUT api/users/:id failed:', err.message);
+
+                return res.status(500).json({
+                    message: 'Unable to update user',
+                    data: {}
+                });
+            }
+        }
+    );
 
     // User ID Route DELETE
     userIdRoute.delete(
