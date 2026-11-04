@@ -297,7 +297,7 @@ module.exports = function (router) {
                 var users;
 
                 if (count) {
-                    users = await User.countDocuments(where);
+                    users = await User.countDocuments(where).skip(skip).limit(limit);
                 } else {
                     users = await User.find(where).sort(sort).select(select).skip(skip).limit(limit);
                 }

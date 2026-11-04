@@ -290,7 +290,7 @@ module.exports = function (router) {
                 var tasks;
 
                 if (count) {
-                    tasks = await Task.countDocuments(where);
+                    tasks = await Task.countDocuments(where).skip(skip).limit(limit);
                 } else {
                     tasks = await Task.find(where).sort(sort).select(select).skip(skip).limit(limit);
                 }
