@@ -636,10 +636,7 @@ module.exports = function (router) {
                 })
             }
 
-            return res.status(200).json({
-                message: 'User deleted successfully',
-                data: deleteUser
-            })
+            return res.status(204).end();
         } catch (err) {
             console.error('DELETE /api/users/:id failed:', err.message);
 

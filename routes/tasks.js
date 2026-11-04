@@ -617,10 +617,7 @@ module.exports = function (router) {
                 })
             }
 
-            return res.status(200).json({
-                message: 'Task deleted successfully',
-                data: deleteTask
-            })
+            return res.status(204).end();
         } catch (err) {
             console.error('DELETE /api/tasks/:id failed:', err.message);
 
